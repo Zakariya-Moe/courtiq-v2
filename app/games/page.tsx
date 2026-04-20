@@ -237,7 +237,7 @@ export default function GamesPage() {
       </div>
 
       {/* Phase 11: Freshness bar — only renders when live games exist and data is delayed */}
-      <div className="reveal reveal-3"><FreshnessBar games={games as any} /></div>
+      <div className="reveal reveal-3"><FreshnessBar games={games} /></div>
 
       {/* Phase 10: Following section — only renders when favorites exist */}
       <FollowingSection />

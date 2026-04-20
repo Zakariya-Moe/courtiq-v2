@@ -33,7 +33,7 @@ export type GameRow = {
  * hasAnyLiveGames
  * Returns true if at least one game is actively in progress.
  */
-export function hasAnyLiveGames(games: GameRow[]): boolean {
+export function hasAnyLiveGames(games: any[]): boolean {
   return games.some(g => g.status === 'in_progress');
 }
 
@@ -43,7 +43,7 @@ export function hasAnyLiveGames(games: GameRow[]): boolean {
  * Only considers in_progress games when live games exist,
  * falls back to all games otherwise.
  */
-export function getMostRecentUpdate(games: GameRow[]): number {
+export function getMostRecentUpdate(games: any[]): number {
   if (!games.length) return 0;
   const liveGames = games.filter(g => g.status === 'in_progress');
   const source    = liveGames.length > 0 ? liveGames : games;
@@ -82,7 +82,7 @@ export function formatAge(ageMs: number): string {
  * Key rule: shouldWarn is false when no live games exist —
  * callers must check this before showing any warning UI.
  */
-export function computeFreshness(games: GameRow[], now: number = Date.now()): FreshnessState {
+export function computeFreshness(games: any[], now: number = Date.now()): FreshnessState {
   const live    = hasAnyLiveGames(games);
   const lastMs  = getMostRecentUpdate(games);
   const ageMs   = lastMs > 0 ? Math.max(0, now - lastMs) : 0;
