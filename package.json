@@ -9,14 +9,14 @@
   "postinstall": "echo 'deps installed'"
 },
   "dependencies": {
-    "next": "14",
-    "react": "^18",
-    "react-dom": "^18",
-    "@supabase/supabase-js": "^2.45.0",
-    "swr": "^2.2.0",
-    "recharts": "^2.12.0",
-    "framer-motion": "^11.0.0"
-  },
+  "next": "14",
+  "react": "^18",
+  "react-dom": "^18",
+  "@supabase/supabase-js": "^2.45.0",
+  "swr": "^2.2.0",
+  "recharts": "^2.12.0",
+  "framer-motion": "^11.0.0"
+},
   "devDependencies": {
     "@types/node": "^20",
     "@types/react": "^18",
