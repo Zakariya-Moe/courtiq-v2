@@ -142,3 +142,8 @@ Set up a free monitor at uptimerobot.com pointing to `/api/health` every 5 minut
 | `/players/[id]` | Player profile — chart, stats, game log |
 | `/teams/[abbr]` | Team page — record, roster, season stats |
 | `/hot` | Trending players — ranked by performance |
+
+
+<!-- deploy -->
+
+
