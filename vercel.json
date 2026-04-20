@@ -4,5 +4,7 @@
       "path": "/api/cron",
       "schedule": "0 6 * * *"
     }
-  ]
+  ],
+  "installCommand": "npm install",
+  "buildCommand": "next build"
 }
