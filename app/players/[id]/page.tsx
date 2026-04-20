@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import useSWR from 'swr';
 import { useState } from 'react';
 import Link from 'next/link';
