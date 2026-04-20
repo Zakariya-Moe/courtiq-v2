@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
+  <!-- Background -->
+  <rect width="192" height="192" rx="42" fill="#000000"/>
+  
+  <!-- Basketball circle outline -->
+  <circle cx="96" cy="96" r="54" fill="none" stroke="#00C805" stroke-width="4"/>
+  
+  <!-- Basketball seam lines -->
+  <!-- Vertical center seam -->
+  <path d="M96 42 Q116 70 116 96 Q116 122 96 150" fill="none" stroke="#00C805" stroke-width="3" stroke-linecap="round"/>
+  <path d="M96 42 Q76 70 76 96 Q76 122 96 150" fill="none" stroke="#00C805" stroke-width="3" stroke-linecap="round"/>
+  <!-- Horizontal center seam -->
+  <line x1="42" y1="96" x2="150" y2="96" stroke="#00C805" stroke-width="3"/>
+</svg>
