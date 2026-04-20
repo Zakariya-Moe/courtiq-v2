@@ -16,7 +16,7 @@ function cachedJson(data: unknown, status = 200) {
 export async function GET(_req: Request, { params }: { params: { id: string } }) {
   const { data: stats, error } = await supabase
     .from('player_stats')
-    .select('*, games(home_team, away_team, status, last_updated)')
+    .select('*, games(home_team, away_team, home_score, away_score, status, last_updated)')
     .eq('player_id', params.id)
     .order('last_updated', { referencedTable: 'games', ascending: false })
     .limit(20);
@@ -46,16 +46,19 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
     ftMade: s.ft_made, ftAttempted: s.ft_attempted,
     minutes: s.minutes,
     homeTeam: s.games?.home_team, awayTeam: s.games?.away_team,
+    gameStatus: s.games?.status,
+    homeScore:  s.games?.home_score ?? 0,
+    awayScore:  s.games?.away_score ?? 0,
     label: s.games?.home_team && s.games?.away_team
-      ? `vs ${s.games.away_team === stats[0].team_abbr ? s.games.home_team : s.games.away_team}`
+      ? `vs ${s.games.away_team === s.team_abbr ? s.games.home_team : s.games.away_team}`
       : undefined,
   }));
 
   return cachedJson({
     success: true,
     playerName: stats[0].player_name,
-    teamAbbr: stats[0].team_abbr,
-    playerId: params.id,
+    teamAbbr:   stats[0].team_abbr,
+    playerId:   params.id,
     averages: {
       gp, pts: avg(tot.pts), reb: avg(tot.reb), ast: avg(tot.ast),
       stl: avg(tot.stl), blk: avg(tot.blk), to: avg(tot.to),

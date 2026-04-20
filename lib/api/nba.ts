@@ -1,50 +1,82 @@
-import { NBA_HEADERS } from './constants';
+// ─────────────────────────────────────────────────────────────
+// NBA GAMES — balldontlie API
+// Endpoint: GET https://api.balldontlie.io/v1/games?dates[]=YYYY-MM-DD
+// Auth: Authorization header (no Bearer prefix)
+// ─────────────────────────────────────────────────────────────
+
+const BASE_URL = 'https://api.balldontlie.io/v1';
+
+function bdlHeaders() {
+  return {
+    Authorization: process.env.BALLDONTLIE_API_KEY ?? '',
+  };
+}
 
 export type Game = {
-  id: string; homeTeam: string; awayTeam: string;
-  homeScore: number; awayScore: number;
+  id: string;
+  homeTeam: string;
+  awayTeam: string;
+  homeScore: number;
+  awayScore: number;
   status: 'scheduled' | 'in_progress' | 'final' | 'postponed';
 };
 
-export async function fetchNBAGames(date = new Date().toISOString().split('T')[0]): Promise<Game[]> {
+/**
+ * Map balldontlie status string → our internal status enum.
+ *
+ * balldontlie returns:
+ *  - "Final"              → final
+ *  - "Final/OT"           → final
+ *  - "Halftime"           → in_progress
+ *  - "1st Qtr" etc        → in_progress
+ *  - "YYYY-MM-DDTHH:mm:ssZ" → scheduled
+ *  - "Postponed"          → postponed
+ */
+function mapStatus(status: string): Game['status'] {
+  if (!status) return 'scheduled';
+  const s = status.trim().toLowerCase();
+  if (s === 'final' || s.startsWith('final/')) return 'final';
+  if (s === 'halftime') return 'in_progress';
+  if (s === 'postponed') return 'postponed';
+  if (/\d+(st|nd|rd|th)\s+qtr/i.test(s)) return 'in_progress';
+  if (s === 'ot' || s.startsWith('ot ')) return 'in_progress';
+  // ISO date string = not started yet
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return 'scheduled';
+  return 'scheduled';
+}
+
+export async function fetchNBAGames(
+  date = new Date().toISOString().split('T')[0],
+): Promise<Game[]> {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 5000);
+  const t = setTimeout(() => ctrl.abort(), 8000);
+
   try {
-    const res = await fetch(
-      `https://stats.nba.com/stats/scoreboardv2?GameDate=${date}&LeagueID=00`,
-      { headers: NBA_HEADERS, signal: ctrl.signal }
-    );
+    const url = `${BASE_URL}/games?dates[]=${date}&per_page=100`;
+    const res = await fetch(url, { headers: bdlHeaders(), signal: ctrl.signal });
     clearTimeout(t);
-    if (!res.ok) return [];
-    const data = await res.json();
-    const gh = data.resultSets?.find((r: any) => r.name === 'GameHeader');
-    const ls = data.resultSets?.find((r: any) => r.name === 'LineScore');
-    if (!gh || !ls) return [];
 
-    const hi = { id: gh.headers.indexOf('GAME_ID'), home: gh.headers.indexOf('HOME_TEAM_ABBREVIATION'), away: gh.headers.indexOf('VISITOR_TEAM_ABBREVIATION'), status: gh.headers.indexOf('GAME_STATUS_TEXT'), hid: gh.headers.indexOf('HOME_TEAM_ID'), aid: gh.headers.indexOf('VISITOR_TEAM_ID') };
-    const li = { id: ls.headers.indexOf('GAME_ID'), tid: ls.headers.indexOf('TEAM_ID'), pts: ls.headers.indexOf('PTS') };
-    if (Object.values(hi).includes(-1) || Object.values(li).includes(-1)) return [];
-
-    const scoreMap = new Map<string, Record<string, number>>();
-    for (const r of ls.rowSet) {
-      const gid = String(r[li.id]);
-      if (!scoreMap.has(gid)) scoreMap.set(gid, {});
-      scoreMap.get(gid)![String(r[li.tid])] = Number(r[li.pts]) || 0;
+    if (!res.ok) {
+      console.error(`[nba] games ${res.status} ${res.statusText}`);
+      return [];
     }
 
-    return gh.rowSet
-      .filter((r: any) => r[hi.id] && r[hi.home] && r[hi.away])
-      .map((r: any) => {
-        const s = String(r[hi.status] || '');
-        const scores = scoreMap.get(String(r[hi.id])) || {};
-        let status: Game['status'] = 'scheduled';
-        if (s.toLowerCase().includes('postponed')) status = 'postponed';
-        else if (s.includes('Final') || s.includes('OT')) status = 'final';
-        else if (s.includes('Q') || s.includes('Halftime')) status = 'in_progress';
-        return {
-          id: String(r[hi.id]), homeTeam: String(r[hi.home]), awayTeam: String(r[hi.away]),
-          homeScore: scores[String(r[hi.hid])] || 0, awayScore: scores[String(r[hi.aid])] || 0, status,
-        };
-      });
-  } catch { clearTimeout(t); return []; }
+    const body = await res.json();
+    const games: any[] = body.data ?? [];
+
+    return games
+      .map((g: any) => ({
+        id: String(g.id),
+        homeTeam: String(g.home_team?.abbreviation ?? ''),
+        awayTeam: String(g.visitor_team?.abbreviation ?? ''),
+        homeScore: Number(g.home_team_score) || 0,
+        awayScore: Number(g.visitor_team_score) || 0,
+        status: mapStatus(String(g.status ?? '')),
+      }))
+      .filter(g => g.homeTeam && g.awayTeam);
+  } catch (err: unknown) {
+    clearTimeout(t);
+    console.error('[nba] fetchNBAGames:', err instanceof Error ? err.message : err);
+    return [];
+  }
 }

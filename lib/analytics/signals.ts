@@ -14,9 +14,19 @@ export type Signal = {
 };
 
 export type GameEntry = {
-  points: number;
+  points:   number;
   rebounds: number;
-  assists: number;
+  assists:  number;
+  /**
+   * Context weight — optional, defaults to 1.0.
+   * Set by player-context.ts:
+   *   tension games  → 1.0  (full weight — most meaningful)
+   *   notable games  → 0.7  (partial — unusual context)
+   *   settled games  → 0.5  (down-weighted — padding risk)
+   *
+   * When weight is absent, the engine behaves identically to before.
+   */
+  weight?: number;
 };
 
 // ─── THRESHOLDS ───────────────────────────────────────────────
@@ -28,9 +38,16 @@ const CONSISTENT_CV_MAX    = 0.18;  // coefficient of variation <= 18%
 const MIN_GAMES_FOR_SIGNAL = 2;     // need at least 2 games
 
 // ─── HELPERS ──────────────────────────────────────────────────
-function mean(vals: number[]): number {
+
+/** Weighted mean — falls back to simple mean when no weights provided */
+function mean(vals: number[], weights?: number[]): number {
   if (!vals.length) return 0;
-  return vals.reduce((a, b) => a + b, 0) / vals.length;
+  if (!weights || weights.every(w => w === 1)) {
+    return vals.reduce((a, b) => a + b, 0) / vals.length;
+  }
+  const totalWeight = weights.reduce((a, b) => a + b, 0);
+  if (totalWeight === 0) return 0;
+  return vals.reduce((a, v, i) => a + v * (weights[i] ?? 1), 0) / totalWeight;
 }
 
 function stdDev(vals: number[], avg: number): number {
@@ -68,15 +85,18 @@ export function generatePlayerSignals(
   const signals: Signal[] = [];
 
   // Use last 3–5 games for recency window
-  const window = recentGames.slice(0, Math.min(5, recentGames.length));
+  const window  = recentGames.slice(0, Math.min(5, recentGames.length));
+  const weights = window.map(g => g.weight ?? 1.0);
 
   const recentPts  = window.map(g => g.points);
   const recentReb  = window.map(g => g.rebounds);
   const recentAst  = window.map(g => g.assists);
 
-  const avgPts = mean(recentPts);
-  const avgReb = mean(recentReb);
-  const avgAst = mean(recentAst);
+  // Weighted averages — context-weighted inputs produce context-aware signals.
+  // When no weights are provided (all 1.0), this is identical to the old mean().
+  const avgPts = mean(recentPts, weights);
+  const avgReb = mean(recentReb, weights);
+  const avgAst = mean(recentAst, weights);
 
   // Baseline: prefer season avg, fall back to recent avg
   const basePts = seasonAvg?.pts ?? avgPts;

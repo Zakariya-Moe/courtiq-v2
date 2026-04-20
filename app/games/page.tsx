@@ -1,16 +1,21 @@
 'use client';
 
 import useSWR from 'swr';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
+import { motion, AnimatePresence } from 'framer-motion';
 import { getTeam } from '@/lib/utils/teams';
 import AnimatedNumber from '../components/AnimatedNumber';
-import PageWrapper from '../components/PageWrapper';
+import PageWrapper, { StaggerList, StaggerItem } from '../components/PageWrapper';
 import SignalFeed from '../components/SignalFeed';
 import FollowingSection from '../components/FollowingSection';
 import FreshnessBar from '../components/FreshnessBar';
 import SearchBar from '../components/SearchBar';
 import LastUpdated from '../components/LastUpdated';
+import LiveBadge from '../components/LiveBadge';
+import FilterTabs from '../components/FilterTabs';
+import { GameCardSkeleton } from '../components/SkeletonCard';
+import { getVerdictContext } from '@/lib/analytics/game-verdict';
 
 type Game = {
   id: string; home_team: string; away_team: string;
@@ -19,14 +24,9 @@ type Game = {
 
 const fetcher = (url: string) => fetch(url).then(r => r.json());
 
-const FILTERS = [
-  { key: 'all',       label: 'All' },
-  { key: 'live',      label: 'Live' },
-  { key: 'final',     label: 'Final' },
-  { key: 'scheduled', label: 'Upcoming' },
-] as const;
-type FK = typeof FILTERS[number]['key'];
+type FK = 'all' | 'live' | 'final' | 'scheduled';
 
+// ── Team badge + score row ────────────────────────────────────
 function TeamLine({
   abbr, score, isWinner, isLive,
 }: { abbr: string; score: number; isWinner: boolean; isLive: boolean }) {
@@ -34,244 +34,413 @@ function TeamLine({
   const prevScore = useRef(score);
   const [flash, setFlash] = useState(false);
 
-  // Flash when score increases during a live game
-  if (isLive && score > prevScore.current) {
-    prevScore.current = score;
-    if (!flash) {
+  useEffect(() => {
+    if (isLive && score > prevScore.current) {
+      prevScore.current = score;
       setFlash(true);
-      setTimeout(() => setFlash(false), 700);
+      const timer = setTimeout(() => setFlash(false), 800);
+      return () => clearTimeout(timer);
     }
-  } else if (!isLive) {
-    prevScore.current = score;
-  }
+    if (!isLive) prevScore.current = score;
+  }, [score, isLive]);
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        {/* Team badge */}
+      {/* Left — badge + name */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
         <div style={{
-          width: 34, height: 34, borderRadius: 9, flexShrink: 0,
+          width: 36, height: 36, borderRadius: 10, flexShrink: 0,
           background: t.primary,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: `0 2px 8px ${t.primary}44`,
         }}>
-          <span style={{ fontSize: 9, fontWeight: 800, color: '#fff', letterSpacing: 0.2 }}>{abbr}</span>
+          <span style={{ fontSize: 9, fontWeight: 800, color: '#fff', letterSpacing: 0.3 }}>{abbr}</span>
         </div>
         <div>
-          <div style={{ fontSize: 11, color: 'var(--t3)', fontWeight: 500, marginBottom: 1 }}>{t.city}</div>
           <div style={{
-            fontSize: 15, fontWeight: 600, letterSpacing: -0.2,
+            fontSize: 10, fontWeight: 700, letterSpacing: '0.06em',
+            textTransform: 'uppercase', color: 'var(--t4)', marginBottom: 2,
+          }}>
+            {t.city}
+          </div>
+          <div style={{
+            fontSize: 15, fontWeight: 600, letterSpacing: '-0.02em',
             color: isWinner ? 'var(--t1)' : 'var(--t3)',
-          }}>{t.name}</div>
+          }}>
+            {t.name}
+          </div>
         </div>
       </div>
-      <div style={{
-        fontSize: 30, fontWeight: 700, letterSpacing: -1,
-        color: flash ? 'var(--green)' : isWinner ? 'var(--t1)' : 'var(--t3)',
-        fontVariantNumeric: 'tabular-nums',
-        transition: 'color 0.6s ease',
-        animation: flash ? 'scoreFlash 0.7s ease both' : 'none',
-      }}>
-        {isLive ? <AnimatedNumber value={score} duration={500} /> : score}
-      </div>
+
+      {/* Right — score */}
+      <motion.div
+        animate={{ color: flash ? '#00C805' : isWinner ? '#ffffff' : 'rgba(255,255,255,0.35)' }}
+        transition={{ duration: flash ? 0 : 0.6, ease: 'easeOut' }}
+        style={{
+          fontSize: 28, fontWeight: 700, letterSpacing: '-0.04em',
+          fontVariantNumeric: 'tabular-nums',
+          fontFamily: 'var(--font-display)',
+        }}
+      >
+        {isLive ? <AnimatedNumber value={score} duration={450} /> : score}
+      </motion.div>
     </div>
   );
 }
 
-function GameCard({ game, index }: { game: Game; index: number }) {
+
+// ── Single game card ──────────────────────────────────────────
+function GameCard({ game }: { game: Game }) {
   const isLive  = game.status === 'in_progress';
   const isFinal = game.status === 'final';
+  const isUp    = game.status === 'scheduled';
+  const isPPD   = game.status === 'postponed';
+
   const homeWins = isFinal && game.home_score > game.away_score;
   const awayWins = isFinal && game.away_score > game.home_score;
   const ht = getTeam(game.home_team);
   const at = getTeam(game.away_team);
+  const total = game.home_score + game.away_score;
+
+  const story = getVerdictContext(game.home_score, game.away_score, game.status);
+
+  const statusLabel = isFinal ? 'FINAL'
+    : isPPD ? 'PPD'
+    : isUp   ? 'UPCOMING'
+    : null;
+
+  const statusColor = isFinal ? 'var(--t4)'
+    : isPPD ? 'var(--red)'
+    : 'var(--amber)';
 
   return (
-    <Link href={`/games/${game.id}`}>
-      <div
-        className="card reveal"
-        style={{ padding: 18, animationDelay: `${index * 60}ms` }}
+    <Link href={`/games/${game.id}`} style={{ display: 'block' }}>
+      <motion.div
+        whileTap={{ scale: 0.975 }}
+        transition={{ duration: 0.12, ease: [0.16, 1, 0.3, 1] }}
+        style={{
+          padding:      '16px 20px',
+          background:   'var(--s1)',
+          border:       '1px solid var(--b1)',
+          borderRadius: 'var(--radius-lg)',
+          position:     'relative',
+          overflow:     'hidden',
+          userSelect:   'none',
+          WebkitUserSelect: 'none',
+        }}
       >
-        {/* Color strip */}
+        {/* Team color strip — full opacity when live */}
         <div style={{
           position: 'absolute', top: 0, left: 0, right: 0, height: 2,
           background: `linear-gradient(90deg, ${at.primary}, ${ht.primary})`,
-          opacity: isLive ? 1 : 0.3,
+          opacity: isLive ? 1 : 0.25,
         }} />
 
-        {/* Status row */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-          {isLive ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <div className="live-dot" />
-              <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--green)', letterSpacing: 0.6 }}>LIVE</span>
-            </div>
-          ) : (
+        {/* Ambient team glow on live games */}
+        {isLive && (
+          <div style={{
+            position:      'absolute',
+            inset:         0,
+            pointerEvents: 'none',
+            background:    `radial-gradient(ellipse at 15% 50%, ${at.primary}10, transparent 55%),
+                            radial-gradient(ellipse at 85% 50%, ${ht.primary}10, transparent 55%)`,
+          }} />
+        )}
+
+        {/* Status row — left: status + story, right: timestamp + chevron */}
+        <div style={{
+          display:        'flex',
+          alignItems:     'center',
+          justifyContent: 'space-between',
+          marginBottom:   13,
+        }}>
+          {/* Left — status + story label */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {isLive ? (
+              <LiveBadge size="sm" />
+            ) : (
+              <span style={{
+                fontSize: 10, fontWeight: 700, letterSpacing: '0.06em',
+                color: statusColor,
+              }}>
+                {statusLabel}
+              </span>
+            )}
+
+            {/* Story label — separator + text */}
+            {story && (
+              <>
+                <span style={{
+                  fontSize: 10,
+                  color:    'rgba(255,255,255,0.15)',
+                  lineHeight: 1,
+                  flexShrink: 0,
+                }}>·</span>
+                <motion.span
+                  initial={{ opacity: 0, x: -4 }}
+                  animate={{ opacity: 1, x:  0 }}
+                  transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1], delay: 0.1 }}
+                  style={{
+                    fontSize:      11,
+                    fontWeight:    600,
+                    letterSpacing: '-0.01em',
+                    color:         story.color,
+                  }}
+                >
+                  {story.short}
+                </motion.span>
+              </>
+            )}
+          </div>
+
+          {/* Right — timestamp + chevron anchored together */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            <LastUpdated timestamp={game.last_updated} isLive={isLive} />
             <span style={{
-              fontSize: 11, fontWeight: 700, letterSpacing: 0.6,
-              color: isFinal ? 'var(--t4)' : game.status === 'postponed' ? 'var(--red)' : 'var(--amber)',
-            }}>
-              {isFinal ? 'FINAL' : game.status === 'postponed' ? 'PPD' : 'UPCOMING'}
-            </span>
-          )}
-          <LastUpdated timestamp={game.last_updated} isLive={isLive} />
+              fontSize:  15,
+              color:     'rgba(255,255,255,0.18)',
+              lineHeight: 1,
+            }}>›</span>
+          </div>
         </div>
 
         {/* Teams */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
           <TeamLine abbr={game.away_team} score={game.away_score} isWinner={awayWins} isLive={isLive} />
-          <div style={{ height: 1, background: 'var(--b1)', marginLeft: 46 }} />
+          <div style={{ height: 1, background: 'var(--b1)', marginLeft: 47 }} />
           <TeamLine abbr={game.home_team} score={game.home_score} isWinner={homeWins} isLive={isLive} />
         </div>
 
-        {/* Score momentum bar */}
-        {(isLive || isFinal) && (game.home_score + game.away_score) > 0 && (
-          <div style={{ marginTop: 14, display: 'flex', gap: 3 }}>
-            <div style={{
-              height: 3, borderRadius: 2,
-              background: at.primary,
-              flex: game.away_score,
-              transition: 'flex 1s var(--ease-out)',
-              transformOrigin: 'left',
-              animation: 'barGrow 0.8s var(--ease-out) both',
-            }} />
-            <div style={{
-              height: 3, borderRadius: 2,
-              background: ht.primary,
-              flex: game.home_score,
-              transition: 'flex 1s var(--ease-out)',
-              transformOrigin: 'right',
-              animation: 'barGrow 0.8s var(--ease-out) both',
-            }} />
+        {/* Momentum bar */}
+        {(isLive || isFinal) && total > 0 && (
+          <div style={{ marginTop: 13, display: 'flex', gap: 2, borderRadius: 3, overflow: 'hidden' }}>
+            <motion.div
+              initial={{ scaleX: 0 }}
+              animate={{ scaleX: 1 }}
+              transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1], delay: 0.15 }}
+              style={{
+                height:          3,
+                background:      at.primary,
+                flex:            game.away_score || 1,
+                transformOrigin: 'left',
+              }}
+            />
+            <motion.div
+              initial={{ scaleX: 0 }}
+              animate={{ scaleX: 1 }}
+              transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1], delay: 0.2 }}
+              style={{
+                height:          3,
+                background:      ht.primary,
+                flex:            game.home_score || 1,
+                transformOrigin: 'right',
+              }}
+            />
           </div>
         )}
 
-        {/* Chevron */}
-        <div style={{
-          position: 'absolute', right: 16, top: '50%', transform: 'translateY(-50%)',
-          fontSize: 18, color: 'var(--t4)', pointerEvents: 'none',
-        }}>›</div>
-      </div>
+      </motion.div>
     </Link>
   );
 }
 
-function SkeletonCard() {
+// ── Empty state ───────────────────────────────────────────────
+function EmptyState({ filter }: { filter: FK }) {
+  const messages: Record<FK, { emoji: string; line1: string; line2: string }> = {
+    all:       { emoji: '🏀', line1: 'No games scheduled today',    line2: 'Check back tomorrow for the next slate' },
+    live:      { emoji: '📡', line1: 'No live games right now',     line2: 'Games appear here as they tip off'       },
+    final:     { emoji: '🏁', line1: 'No completed games yet',      line2: 'Final scores appear here after games end' },
+    scheduled: { emoji: '🗓️', line1: 'No upcoming games',           line2: 'All games today may have already started' },
+  };
+  const m = messages[filter];
+
   return (
-    <div style={{ padding: 18, background: 'var(--s1)', border: '1px solid var(--b1)', borderRadius: 16 }}>
-      <div className="skeleton" style={{ height: 12, width: 48, marginBottom: 16 }} />
-      {[0, 1].map(i => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: i === 0 ? 10 : 0 }}>
-          <div className="skeleton" style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0 }} />
-          <div style={{ flex: 1 }}>
-            <div className="skeleton" style={{ height: 10, width: 40, marginBottom: 5 }} />
-            <div className="skeleton" style={{ height: 14, width: 90 }} />
-          </div>
-          <div className="skeleton" style={{ height: 28, width: 36, borderRadius: 6 }} />
-        </div>
-      ))}
-    </div>
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+      style={{
+        textAlign:    'center',
+        padding:      '56px 24px',
+        background:   'var(--s1)',
+        border:       '1px solid var(--b1)',
+        borderRadius: 'var(--radius-lg)',
+      }}
+    >
+      <div style={{ fontSize: 40, marginBottom: 14, lineHeight: 1 }}>{m.emoji}</div>
+      <div style={{
+        fontSize:      16,
+        fontWeight:    600,
+        letterSpacing: '-0.02em',
+        color:         'var(--t1)',
+        marginBottom:  6,
+      }}>
+        {m.line1}
+      </div>
+      <div style={{ fontSize: 13, color: 'var(--t3)', lineHeight: 1.5 }}>
+        {m.line2}
+      </div>
+    </motion.div>
   );
 }
 
+// ── Page ──────────────────────────────────────────────────────
 export default function GamesPage() {
-  const { data, error, isLoading } = useSWR('/api/games', fetcher, { refreshInterval: 30000 });
+  const { data, error, isLoading } = useSWR('/api/games', fetcher, { refreshInterval: 30_000 });
   const [filter, setFilter] = useState<FK>('all');
 
-  const games: Game[] = data?.games || [];
+  const games: Game[] = data?.games ?? [];
+
   const filtered = games.filter(g => {
     if (filter === 'live')      return g.status === 'in_progress';
     if (filter === 'final')     return g.status === 'final';
     if (filter === 'scheduled') return g.status === 'scheduled';
     return true;
   });
-  const liveCount = games.filter(g => g.status === 'in_progress').length;
+
+  const liveCount  = games.filter(g => g.status === 'in_progress').length;
+  const finalCount = games.filter(g => g.status === 'final').length;
+
+  // "Close" = live games within 8 points — worth surfacing in the filter tab
+  const closeCount = games.filter(g =>
+    g.status === 'in_progress' &&
+    Math.abs(g.home_score - g.away_score) <= 8 &&
+    (g.home_score + g.away_score) > 0
+  ).length;
+
+  // Live tab label: "Live  3 · 2 close" when close games exist
+  const liveTabLabel = liveCount > 0 && closeCount > 0
+    ? `Live · ${closeCount} close`
+    : 'Live';
+
+  const filterTabs = [
+    { key: 'all',       label: 'All' },
+    { key: 'live',      label: liveTabLabel, dot: liveCount > 0, badge: liveCount > 0 ? liveCount : undefined },
+    { key: 'final',     label: 'Final',      badge: finalCount > 0 ? finalCount : undefined },
+    { key: 'scheduled', label: 'Upcoming'   },
+  ];
 
   return (
     <PageWrapper>
-      {/* Header */}
-      <div className="reveal reveal-0" style={{ paddingTop: 12, marginBottom: 22 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
-          <h1 style={{ fontSize: 28, fontWeight: 700, letterSpacing: -0.6 }}>CourtIQ</h1>
-          {liveCount > 0 && (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 5,
-              background: 'var(--green-10)', border: '1px solid var(--green-20)',
-              borderRadius: 100, padding: '4px 10px',
-            }}>
-              <div className="live-dot" style={{ width: 6, height: 6 }} />
-              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--green)' }}>{liveCount} Live</span>
-            </div>
-          )}
+      {/* ── Header ─────────────────────────────────────────── */}
+      <motion.div
+        initial={{ opacity: 0, y: -4 }}
+        animate={{ opacity: 1, y:  0 }}
+        transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+        style={{
+          display:        'flex',
+          alignItems:     'flex-end',
+          justifyContent: 'space-between',
+          paddingTop:     10,
+          marginBottom:   20,
+        }}
+      >
+        <div>
+          <h1 style={{
+            fontFamily:    'var(--font-display)',
+            fontSize:      30,
+            fontWeight:    700,
+            letterSpacing: '-0.04em',
+            lineHeight:    1,
+            marginBottom:  4,
+          }}>
+            CourtIQ
+          </h1>
+          <p style={{
+            fontSize:      12,
+            fontWeight:    500,
+            letterSpacing: '-0.01em',
+            color:         'var(--t3)',
+          }}>
+            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+          </p>
         </div>
-        <p style={{ fontSize: 13, color: 'var(--t3)' }}>
-          {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
-        </p>
-      </div>
 
-      {/* Phase 12: Search */}
-      <div className="reveal reveal-1">
+        <AnimatePresence>
+          {liveCount > 0 && (
+            <motion.div
+              key="live-badge"
+              initial={{ opacity: 0, scale: 0.8, x: 8 }}
+              animate={{ opacity: 1, scale: 1,   x: 0 }}
+              exit={{    opacity: 0, scale: 0.8,  x: 8 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 28 }}
+            >
+              <LiveBadge count={liveCount} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+
+      {/* ── Search ─────────────────────────────────────────── */}
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, delay: 0.05, ease: [0.16, 1, 0.3, 1] }}
+        style={{ marginBottom: 14 }}
+      >
         <SearchBar />
-      </div>
+      </motion.div>
 
-      {/* Filter chips */}
-      <div className="scroll-x reveal reveal-2" style={{ marginBottom: 18 }}>
-        {FILTERS.map(f => (
-          <button
-            key={f.key}
-            className={`chip ${filter === f.key ? 'active' : ''}`}
-            onClick={() => setFilter(f.key)}
-          >
-            {f.key === 'live' && liveCount > 0 && (
-              <div className="live-dot" style={{ width: 5, height: 5, flexShrink: 0 }} />
-            )}
-            {f.label}
-            {f.key === 'live' && liveCount > 0 && (
-              <span style={{
-                background: filter === 'live' ? 'rgba(0,0,0,0.2)' : 'var(--green)',
-                color: '#000', borderRadius: 100, padding: '0 5px',
-                fontSize: 10, fontWeight: 700,
-              }}>{liveCount}</span>
-            )}
-          </button>
-        ))}
-      </div>
+      {/* ── Filter tabs ─────────────────────────────────────── */}
+      <motion.div
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
+        style={{ marginBottom: 18 }}
+      >
+        <FilterTabs tabs={filterTabs} active={filter} onChange={(k) => setFilter(k as FK)} />
+      </motion.div>
 
-      {/* Phase 11: Freshness bar — only renders when live games exist and data is delayed */}
-      <div className="reveal reveal-3"><FreshnessBar games={games} /></div>
+      {/* ── Freshness bar ───────────────────────────────────── */}
+      <FreshnessBar games={games} />
 
-      {/* Phase 10: Following section — only renders when favorites exist */}
+      {/* ── Following + Signal Feed ─────────────────────────── */}
       <FollowingSection />
+      <SignalFeed limit={6} refreshMs={15_000} />
 
-      {/* Phase 9: Signal Feed — renders only when events exist */}
-      <SignalFeed limit={6} refreshMs={15000} />
+      {/* ── Content ─────────────────────────────────────────── */}
 
-      {/* Content */}
+      {/* Loading skeletons */}
       {isLoading && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {[1, 2, 3].map(i => <SkeletonCard key={i} />)}
+          {[0, 1, 2, 3].map(i => <GameCardSkeleton key={i} index={i} />)}
         </div>
       )}
 
-      {error && (
-        <div style={{
-          background: 'var(--red-10)', border: '1px solid var(--red-20)',
-          borderRadius: 14, padding: '20px', textAlign: 'center',
-        }}>
-          <p style={{ color: 'var(--red)', fontSize: 14, fontWeight: 600 }}>Failed to load</p>
-        </div>
+      {/* Error */}
+      {!isLoading && error && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          style={{
+            background:   'var(--red-10)',
+            border:       '1px solid var(--red-20)',
+            borderRadius: 'var(--radius-md)',
+            padding:      '20px',
+            textAlign:    'center',
+          }}
+        >
+          <p style={{ color: 'var(--red)', fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
+            Failed to load games
+          </p>
+          <p style={{ color: 'var(--t3)', fontSize: 12 }}>Check your connection and try again</p>
+        </motion.div>
       )}
 
+      {/* Empty state */}
       {!isLoading && !error && filtered.length === 0 && (
-        <div style={{ textAlign: 'center', padding: '64px 20px' }}>
-          <p style={{ fontSize: 36, marginBottom: 12 }}>🏀</p>
-          <p style={{ color: 'var(--t2)', fontSize: 16 }}>No {filter === 'all' ? '' : filter} games today</p>
-        </div>
+        <EmptyState filter={filter} />
       )}
 
-      {!isLoading && !error && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {filtered.map((g, i) => <GameCard key={g.id} game={g} index={i} />)}
-        </div>
+      {/* Game list — staggered entrance */}
+      {!isLoading && !error && filtered.length > 0 && (
+        <StaggerList style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {filtered.map(g => (
+            <StaggerItem key={g.id}>
+              <GameCard game={g} />
+            </StaggerItem>
+          ))}
+        </StaggerList>
       )}
     </PageWrapper>
   );
